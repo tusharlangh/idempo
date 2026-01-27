@@ -4,7 +4,7 @@
 
 # setup:
 
-## config/ env.ts
+## config/
 
 ## controllers/
 
@@ -15,3 +15,9 @@
 ## utils/
 
 ## types/
+
+# flow:
+
+## events recieve from webhook > fetch payload >
+
+## payload: {id, type, created, data: {object: {details of the object}}}
