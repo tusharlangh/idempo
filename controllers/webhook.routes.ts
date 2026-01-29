@@ -41,7 +41,7 @@ export async function WebHookProvider(req: Request, res: Response) {
       );
     }
 
-    const event: CanonicalEvent = {
+    const payload: CanonicalEvent = {
       id: req.body.id || uuidv4(),
       type: req.body.type || "unknown.event",
       created: req.body.created || Math.floor(Date.now() / 1000),
@@ -53,7 +53,7 @@ export async function WebHookProvider(req: Request, res: Response) {
 
     const { data, error } = await supabase
       .from("event")
-      .insert({ event: event, event_status: "RECEIVED" })
+      .insert({ payload: payload, event_status: "RECEIVED" })
       .select()
       .single();
 
