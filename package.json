@@ -1,0 +1,27 @@
+{
+  "name": "idempo",
+  "version": "1.0.0",
+  "description": "1. event fetch (payload)",
+  "scripts": {
+    "start": "node server.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tusharlangh/idempo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/tusharlangh/idempo/issues"
+  },
+  "homepage": "https://github.com/tusharlangh/idempo#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.93.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "uuid": "^13.0.0"
+  }
+}

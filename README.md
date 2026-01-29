@@ -4,7 +4,7 @@
 
 # setup:
 
-## config/ env.ts
+## config/
 
 ## controllers/
 
@@ -15,3 +15,11 @@
 ## utils/
 
 ## types/
+
+## middlewares/
+
+# flow:
+
+## events recieve from webhook > verify > create payload > persist db
+
+## payload: {id, type, created, data: {object: {details of the object}}}
