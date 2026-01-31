@@ -2,13 +2,20 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import supabase from "../utils/supabase/client.ts";
+import { Retry } from "../utils/retry.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const retry = new Retry();
+
+async function runContainer() {
+  await retry.retry(() => run(), 3);
+}
+
 async function run() {
-  console.log("start worker");
+  console.log("Worker started");
 
   while (true) {
     try {
@@ -21,38 +28,42 @@ async function run() {
         .single();
 
       if (error || !event) {
-        console.log("did not find anything sleeping worker");
+        console.log("No events found, sleeping for 1s");
         await sleep(1000);
         continue;
       }
 
+      console.log(`Processing event ID: ${event.id}`);
       const DESTINATION_URL = "http://localhost:5000/";
 
       try {
-        const res = await fetch(DESTINATION_URL, {
-          method: "POST",
-          headers: { "Content-type": "application/json" },
-          body: JSON.stringify(event.payload),
-        });
+        await retry.retry(async () => {
+          const res = await fetch(DESTINATION_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(event.payload),
+          });
 
-        let mark = "";
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
 
-        if (res.ok) {
-          mark = "DELIVERED";
-        } else {
-          mark = "FAILED";
-        }
+          return res;
+        }, 3);
 
-        const { data: e, error } = await supabase
+        await supabase
           .from("event")
-          .update({ event_status: mark })
+          .update({ event_status: "DELIVERED" })
           .eq("id", event.id)
           .select()
           .limit(1)
           .single();
+
+        console.log(`Event ${event.id} delivered successfully`);
       } catch (error) {
-        console.error(error);
-        const { data: e, error: err } = await supabase
+        console.error(`Event ${event.id} failed:`, error);
+
+        await supabase
           .from("event")
           .update({ event_status: "FAILED" })
           .eq("id", event.id)
@@ -60,8 +71,6 @@ async function run() {
           .limit(1)
           .single();
       }
-
-      console.log("successfully everythign worked");
     } catch (error) {
       console.error("Worker error:", error);
       await sleep(1000);
@@ -69,4 +78,4 @@ async function run() {
   }
 }
 
-await run();
+await runContainer();
