@@ -3,6 +3,7 @@ dotenv.config();
 
 import supabase from "../utils/supabase/client.ts";
 import { Retry } from "../utils/retry.ts";
+import { AppError } from "../middleware/errorHandler.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,21 +37,39 @@ async function run() {
       console.log(`Processing event ID: ${event.id}`);
       const DESTINATION_URL = "http://localhost:5000/";
 
-      try {
-        await retry.retry(async () => {
-          const res = await fetch(DESTINATION_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(event.payload),
-          });
+      const { result, error_details } = await retry.retry(async () => {
+        const res = await fetch(DESTINATION_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(event.payload),
+        });
 
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-          }
+        if (!res.ok) {
+          throw new AppError(
+            `HTTP ${res.status}: ${res.statusText}`,
+            500,
+            "FAILED_DELIVERY",
+          );
+        }
 
-          return res;
-        }, 3);
+        return res;
+      }, 3);
 
+      if (error_details.flag === "FAILURE") {
+        await supabase
+          .from("event")
+          .update({
+            event_status: "FAILED",
+            error_details: error_details,
+            failed_at: new Date().toISOString(),
+          })
+          .eq("id", event.id)
+          .select()
+          .limit(1)
+          .single();
+
+        console.error(`Event ${event.id} failed after retries:`, error_details);
+      } else {
         await supabase
           .from("event")
           .update({ event_status: "DELIVERED" })
@@ -60,16 +79,6 @@ async function run() {
           .single();
 
         console.log(`Event ${event.id} delivered successfully`);
-      } catch (error) {
-        console.error(`Event ${event.id} failed:`, error);
-
-        await supabase
-          .from("event")
-          .update({ event_status: "FAILED" })
-          .eq("id", event.id)
-          .select()
-          .limit(1)
-          .single();
       }
     } catch (error) {
       console.error("Worker error:", error);
