@@ -1,4 +1,5 @@
 import { AppError } from "../middleware/errorHandler.ts";
+import type { IdempotencyKeysProps } from "../types/databse.js";
 import { hashRequestBody } from "../utils/hash.ts";
 import supabase from "../utils/supabase/client.ts";
 
@@ -11,20 +12,20 @@ export async function acquireIdempotencyKey(key: string, body: any) {
       key: key,
       request_hash: hashedBody,
       status: "PROCESSING",
-      locked_at: new Date().toISOString(),
+      locked_at: new Date(),
     })
     .select()
     .single();
 
   if (!error) {
-    return { sucess: true, action: "PROCEED" };
+    return { success: true, action: "PROCEED" };
   }
 
-  const { data: exist } = await supabase
+  const { data: exist } = (await supabase
     .from("idempotency_keys")
     .select()
     .eq("key", key)
-    .single();
+    .single()) as { data: IdempotencyKeysProps };
 
   if (!exist) {
     throw new AppError(
@@ -34,20 +35,70 @@ export async function acquireIdempotencyKey(key: string, body: any) {
     );
   }
 
-  if (exist.response_hash !== hashedBody) {
+  if (exist.request_hash !== hashedBody) {
     return { success: false, action: "HASHED_MISMATCH" };
   }
 
-  if (exist.status === "COMPLETED") {
+  const LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+
+  if (exist.status === "PROCESSING") {
+    const lockAge = Date.now() - exist.locked_at.getTime();
+
+    if (lockAge > LOCK_TIMEOUT_MS) {
+      await supabase
+        .from("idempotency_keys")
+        .update({
+          locked_at: new Date().toISOString(),
+          status: "PROCESSING",
+        })
+        .eq("key", key);
+
+      return { success: true, action: "PROCEED" };
+    }
+  }
+
+  if (exist.status === "PROCESSED") {
     return {
       success: false,
       action: "RETURN_CACHED",
       metadata: {
         response_status: exist.response_status,
-        response_body: exist.resposne_body,
+        response_body: exist.response_body,
       },
     };
   }
 
+  if (exist.status === "FAILED") {
+    return {
+      success: false,
+      action: "FAILED",
+    };
+  }
+
   return { success: false, action: "CONFLICT" };
+}
+
+export async function markIdempotencyKey(
+  status: "PROCESSED" | "FAILED",
+  key: string,
+  responseStatus: number,
+  responseBody: { action: string; success: boolean },
+) {
+  const { error } = await supabase
+    .from("idempotency_keys")
+    .update({
+      status: status,
+      response_status: responseStatus,
+      response_body: responseBody,
+      updated_at: new Date(),
+    })
+    .eq("key", key);
+
+  if (error) {
+    throw new AppError(
+      "Failed to mark idempotency key as processed",
+      500,
+      "UPDATE_IDEM_KEY_FAILED",
+    );
+  }
 }

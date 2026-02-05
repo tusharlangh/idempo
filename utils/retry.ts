@@ -1,5 +1,11 @@
+import type {
+  FlagTypes,
+  HistoryProps,
+  RetryAttempProps,
+} from "../types/retry.d.ts";
+
 export class Retry {
-  history: any[];
+  history: HistoryProps[];
 
   constructor() {
     this.history = [];
@@ -14,20 +20,15 @@ export class Retry {
     retries: number,
   ): Promise<{
     result: T | undefined;
-    error_details: { flag: string; retry_attempts: any };
+    error_details: { flag: FlagTypes; retry_attempts: any };
   }> {
     retries = Math.min(retries, 100);
 
     let curRetry: number = 0;
     let retryIndex: number = 1;
-    let flag = "UNKNOWN";
+    let flag: FlagTypes = "UNKNOWN";
     let result: T | undefined;
-    const retryAttempts: Array<{
-      attempt: number;
-      timestamp: Date;
-      error: string;
-      errorCode: number | string;
-    }> = [];
+    const retryAttempts: RetryAttempProps[] = [];
 
     while (true) {
       try {

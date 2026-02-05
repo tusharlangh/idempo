@@ -51,9 +51,15 @@ export async function WebHookProvider(req: Request, res: Response) {
       },
     };
 
+    const idempotencyKey = req.header("Idempotency-key");
+
     const { data, error } = await supabase
       .from("event")
-      .insert({ payload: payload, event_status: "RECEIVED" })
+      .insert({
+        payload: payload,
+        event_status: "RECEIVED",
+        idempotency_key: idempotencyKey,
+      })
       .select()
       .single();
 
@@ -65,7 +71,7 @@ export async function WebHookProvider(req: Request, res: Response) {
       );
     }
 
-    return res.status(200).json({ success: true, error: null });
+    return res.status(202).json({ success: true, error: null });
   } catch (error) {
     console.error("webhook error: ", error);
     return res.status(500).json({ success: false, error: "internal error" });

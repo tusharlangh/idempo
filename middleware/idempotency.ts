@@ -1,27 +1,24 @@
-import { error } from "node:console";
 import { acquireIdempotencyKey } from "../services/idempotency.service.ts";
+import { type NextFunction, type Request, type Response } from "express";
 
-import express, {
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import type { AppError } from "./errorHandler.ts";
-
-export async function idemp(req: Request, res: Response, next: NextFunction) {
+export async function idempo(req: Request, res: Response, next: NextFunction) {
   try {
-    const key = req.header("Idempotency-key") as string;
+    const key: string | undefined = req.header("Idempotency-key");
 
-    const body = req.body;
+    if (!key) {
+      return next();
+    }
+
+    const body: Record<string, any> = req.body;
     const acquire = await acquireIdempotencyKey(key, body);
 
     switch (acquire.action) {
-      case "PROCCEED":
+      case "PROCEED":
         return next();
 
       case "RETURN_CACHED":
         return res
-          .status(acquire.metadata?.response_status)
+          .status(acquire.metadata?.response_status ?? 200)
           .json(acquire.metadata?.response_body);
 
       case "CONFLICT":
@@ -29,7 +26,7 @@ export async function idemp(req: Request, res: Response, next: NextFunction) {
           .status(409)
           .json({ error: "Request with this key already exists." });
 
-      case "HASH_MISMATCH":
+      case "HASHED_MISMATCH":
         return res.status(400).json({
           error: "Request with this key exists but with a different body",
         });

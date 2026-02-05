@@ -4,6 +4,8 @@ dotenv.config();
 import supabase from "../utils/supabase/client.ts";
 import { Retry } from "../utils/retry.ts";
 import { AppError } from "../middleware/errorHandler.ts";
+import type { EventProps } from "../types/databse.ts";
+import { markIdempotencyKey } from "../services/idempotency.service.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,13 +22,13 @@ async function run() {
 
   while (true) {
     try {
-      const { data: event, error } = await supabase
+      const { data: event, error } = (await supabase
         .from("event")
         .update({ event_status: "PROCESSING" })
         .eq("event_status", "RECEIVED")
         .select()
         .limit(1)
-        .single();
+        .single()) as { data: EventProps | null; error: any };
 
       if (error || !event) {
         console.log("No events found, sleeping for 1s");
@@ -55,28 +57,34 @@ async function run() {
         return res;
       }, 3);
 
+      const idempotencyKey = event.idempotency_key;
+
       if (error_details.flag === "FAILURE") {
         await supabase
           .from("event")
           .update({
             event_status: "FAILED",
             error_details: error_details,
-            failed_at: new Date().toISOString(),
+            failed_at: new Date(),
           })
-          .eq("id", event.id)
-          .select()
-          .limit(1)
-          .single();
+          .eq("id", event.id);
+
+        await markIdempotencyKey("FAILED", idempotencyKey, 400, {
+          success: false,
+          action: "FAILED",
+        });
 
         console.error(`Event ${event.id} failed after retries:`, error_details);
       } else {
         await supabase
           .from("event")
           .update({ event_status: "DELIVERED" })
-          .eq("id", event.id)
-          .select()
-          .limit(1)
-          .single();
+          .eq("id", event.id);
+
+        await markIdempotencyKey("PROCESSED", idempotencyKey, 200, {
+          success: true,
+          action: "PROCESSED",
+        });
 
         console.log(`Event ${event.id} delivered successfully`);
       }
