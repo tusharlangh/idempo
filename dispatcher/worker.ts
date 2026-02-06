@@ -7,18 +7,20 @@ import { AppError } from "../middleware/errorHandler.ts";
 import type { EventProps } from "../types/databse.ts";
 import { markIdempotencyKey } from "../services/idempotency.service.ts";
 import { moveToDeadLetter } from "../services/dlq.service.ts";
+import { RateLimiter } from "../utils/rateLimiter.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-const retry = new Retry();
 
 let isShuttingDown = false;
 process.on("SIGINT", () => {
   console.log("\nSHUTDOWN received, finishing current work");
   isShuttingDown = true;
 });
+
+const retry = new Retry();
+const rateLimiter = new RateLimiter(10, 10);
 
 process.on("SIGTERM", () => {
   console.log("\nSHUTDOWN received, finishing current work");
@@ -58,6 +60,8 @@ async function run() {
 
       console.log(`Processing event ID: ${event.id}`);
       const DESTINATION_URL = "https://httpbin.org/status/20";
+
+      await rateLimiter.acquire();
 
       const { result, error_details } = await retry.retry(async () => {
         const res = await fetch(DESTINATION_URL, {
