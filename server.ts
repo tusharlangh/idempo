@@ -1,5 +1,7 @@
 import express from "express";
 import routes from "./routes/webhook.ts";
+import dlqRoutes from "./routes/admin.ts";
+import healthRoutes from "./routes/health.ts";
 import { errorHandler } from "./middleware/errorHandler.ts";
 
 const app = express();
@@ -13,6 +15,8 @@ app.use(
 );
 
 app.use("/", routes);
+app.use("/admin", dlqRoutes);
+app.use("/health", healthRoutes);
 app.use(errorHandler);
 
 const port = Number(process.env.PORT) || 3000;

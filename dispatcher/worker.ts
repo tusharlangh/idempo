@@ -2,71 +2,127 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import supabase from "../utils/supabase/client.ts";
+import { Retry } from "../utils/retry.ts";
+import { AppError } from "../middleware/errorHandler.ts";
+import type { EventProps } from "../types/databse.ts";
+import { markIdempotencyKey } from "../services/idempotency.service.ts";
+import { moveToDeadLetter } from "../services/dlq.service.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const retry = new Retry();
+
+let isShuttingDown = false;
+process.on("SIGINT", () => {
+  console.log("\nSHUTDOWN received, finishing current work");
+  isShuttingDown = true;
+});
+
+process.on("SIGTERM", () => {
+  console.log("\nSHUTDOWN received, finishing current work");
+  isShuttingDown = true;
+
+  setTimeout(() => {
+    console.error("SHUTDOWN - Forced exit after timeout");
+    process.exit(1);
+  }, 30000);
+});
+
+async function runContainer() {
+  await retry.retry(() => run(), 3);
+}
+
 async function run() {
-  console.log("start worker");
+  console.log("Worker started");
 
   while (true) {
+    if (isShuttingDown) {
+      console.log("SHUTDOWN - Exiting worker loop");
+      break;
+    }
+
     try {
-      const { data: event, error } = await supabase
-        .from("event")
-        .update({ event_status: "PROCESSING" })
-        .eq("event_status", "RECEIVED")
-        .select()
-        .limit(1)
-        .single();
+      const { data, error } = (await supabase.rpc("clain_next_event")) as {
+        data: EventProps[];
+        error: any;
+      };
+      const event = data?.[0];
 
       if (error || !event) {
-        console.log("did not find anything sleeping worker");
+        console.log("No events found, sleeping for 1s");
         await sleep(1000);
         continue;
       }
 
-      const DESTINATION_URL = "http://localhost:5000/";
+      console.log(`Processing event ID: ${event.id}`);
+      const DESTINATION_URL = "https://httpbin.org/status/20";
 
-      try {
+      const { result, error_details } = await retry.retry(async () => {
         const res = await fetch(DESTINATION_URL, {
           method: "POST",
-          headers: { "Content-type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(event.payload),
         });
 
-        let mark = "";
-
-        if (res.ok) {
-          mark = "DELIVERED";
-        } else {
-          mark = "FAILED";
+        if (!res.ok) {
+          throw new AppError(
+            `HTTP ${res.status}: ${res.statusText}`,
+            500,
+            "FAILED_DELIVERY",
+          );
         }
 
-        const { data: e, error } = await supabase
-          .from("event")
-          .update({ event_status: mark })
-          .eq("id", event.id)
-          .select()
-          .limit(1)
-          .single();
-      } catch (error) {
-        console.error(error);
-        const { data: e, error: err } = await supabase
-          .from("event")
-          .update({ event_status: "FAILED" })
-          .eq("id", event.id)
-          .select()
-          .limit(1)
-          .single();
-      }
+        return res;
+      }, 3);
 
-      console.log("successfully everythign worked");
+      const idempotencyKey = event.idempotency_key;
+
+      if (error_details.flag === "FAILURE") {
+        await moveToDeadLetter(
+          event.id,
+          idempotencyKey,
+          event.payload,
+          error_details,
+        );
+
+        await supabase
+          .from("event")
+          .update({
+            event_status: "FAILED",
+            error_details: error_details,
+            failed_at: new Date(),
+          })
+          .eq("id", event.id);
+
+        await markIdempotencyKey("FAILED", idempotencyKey, 400, {
+          success: false,
+          action: "FAILED",
+        });
+
+        console.error(`Event ${event.id} failed after retries:`, error_details);
+      } else {
+        await supabase
+          .from("event")
+          .update({ event_status: "DELIVERED" })
+          .eq("id", event.id);
+
+        await markIdempotencyKey("PROCESSED", idempotencyKey, 200, {
+          success: true,
+          action: "PROCESSED",
+        });
+
+        console.log(`Event ${event.id} delivered successfully`);
+      }
     } catch (error) {
       console.error("Worker error:", error);
       await sleep(1000);
     }
   }
+
+  console.log("SHUTDOWN - Worker stopped cleanly");
+  process.exit(0);
 }
 
-await run();
+await runContainer();
