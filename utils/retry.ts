@@ -1,4 +1,5 @@
 import type {
+  ErrorDetailsProps,
   FlagTypes,
   HistoryProps,
   RetryAttempProps,
@@ -20,7 +21,7 @@ export class Retry {
     retries: number,
   ): Promise<{
     result: T | undefined;
-    error_details: { flag: FlagTypes; retry_attempts: any };
+    error_details: ErrorDetailsProps;
   }> {
     retries = Math.min(retries, 100);
 

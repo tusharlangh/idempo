@@ -6,6 +6,7 @@ import { Retry } from "../utils/retry.ts";
 import { AppError } from "../middleware/errorHandler.ts";
 import type { EventProps } from "../types/databse.ts";
 import { markIdempotencyKey } from "../services/idempotency.service.ts";
+import { moveToDeadLetter } from "../services/dlq.service.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,13 +23,11 @@ async function run() {
 
   while (true) {
     try {
-      const { data: event, error } = (await supabase
-        .from("event")
-        .update({ event_status: "PROCESSING" })
-        .eq("event_status", "RECEIVED")
-        .select()
-        .limit(1)
-        .single()) as { data: EventProps | null; error: any };
+      const { data, error } = (await supabase.rpc("clain_next_event")) as {
+        data: EventProps[];
+        error: any;
+      };
+      const event = data?.[0];
 
       if (error || !event) {
         console.log("No events found, sleeping for 1s");
@@ -37,7 +36,7 @@ async function run() {
       }
 
       console.log(`Processing event ID: ${event.id}`);
-      const DESTINATION_URL = "http://localhost:5000/";
+      const DESTINATION_URL = "https://httpbin.org/status/20";
 
       const { result, error_details } = await retry.retry(async () => {
         const res = await fetch(DESTINATION_URL, {
@@ -60,6 +59,13 @@ async function run() {
       const idempotencyKey = event.idempotency_key;
 
       if (error_details.flag === "FAILURE") {
+        await moveToDeadLetter(
+          event.id,
+          idempotencyKey,
+          event.payload,
+          error_details,
+        );
+
         await supabase
           .from("event")
           .update({

@@ -4,6 +4,11 @@ export interface HistoryProps {
   retry_attempts: RetryAttempProps[];
 }
 
+export interface ErrorDetailsProps {
+  flag: FlagTypes;
+  retry_attempts: RetryAttempProps[];
+}
+
 export type FlagTypes = "SUCCESS" | "UNKNOWN" | "FAILURE";
 
 export interface RetryAttempProps {

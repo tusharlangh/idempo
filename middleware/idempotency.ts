@@ -21,6 +21,11 @@ export async function idempo(req: Request, res: Response, next: NextFunction) {
           .status(acquire.metadata?.response_status ?? 200)
           .json(acquire.metadata?.response_body);
 
+      case "FAILED":
+        return res
+          .status(acquire.metadata?.response_status ?? 400)
+          .json(acquire.metadata?.response_body);
+
       case "CONFLICT":
         return res
           .status(409)

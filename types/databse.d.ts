@@ -1,9 +1,10 @@
+import type { ErrorDetailsProps } from "./retry.d.ts";
+
 export interface EventProps {
-  id: number;
+  id: string;
   event_status: string;
-  attempt_count: number;
   payload: any;
-  error_details: any;
+  error_details: ErrorDetailsProps;
   failed_at: Date;
   idempotency_key: string;
 }
@@ -21,3 +22,16 @@ export interface IdempotencyKeysProps {
 }
 
 export type IdempoKeysStatus = "PROCESSING" | "PROCESSED" | "FAILED";
+
+export interface DLQEventProps {
+  id: string;
+  original_event_id: number;
+  idempotency_key: string;
+  payload: any;
+  error_details: ErrorDetailsProps;
+  status: string;
+  retry_count: number;
+  failed_at: Date;
+  resolved_at: Date | null;
+  created_at: Date;
+}

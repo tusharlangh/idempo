@@ -16,6 +16,7 @@ export async function acquireIdempotencyKey(key: string, body: any) {
     })
     .select()
     .single();
+  console.log(error);
 
   if (!error) {
     return { success: true, action: "PROCEED" };
@@ -39,11 +40,11 @@ export async function acquireIdempotencyKey(key: string, body: any) {
     return { success: false, action: "HASHED_MISMATCH" };
   }
 
-  const LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+  const LOCK_TIMEOUT_MS = 1 * 60 * 1000;
 
   if (exist.status === "PROCESSING") {
-    const lockAge = Date.now() - exist.locked_at.getTime();
-
+    const lockAge = Date.now() - new Date(exist.locked_at).getTime();
+    console.log(lockAge);
     if (lockAge > LOCK_TIMEOUT_MS) {
       await supabase
         .from("idempotency_keys")
@@ -72,6 +73,10 @@ export async function acquireIdempotencyKey(key: string, body: any) {
     return {
       success: false,
       action: "FAILED",
+      metadata: {
+        response_status: exist.response_status,
+        response_body: exist.response_body,
+      },
     };
   }
 

@@ -12,6 +12,7 @@ export async function WebHookProvider(req: Request, res: Response) {
   try {
     const rawBody = (req as any).rawBody as Buffer;
     const signature = req.headers["x-webhook-signature"] as string;
+    const idempotencyKey = req.header("Idempotency-key") as string;
 
     const secretKey = process.env.WEBHOOKSECRET as string;
 
@@ -51,8 +52,6 @@ export async function WebHookProvider(req: Request, res: Response) {
       },
     };
 
-    const idempotencyKey = req.header("Idempotency-key");
-
     const { data, error } = await supabase
       .from("event")
       .insert({
@@ -65,7 +64,7 @@ export async function WebHookProvider(req: Request, res: Response) {
 
     if (error) {
       throw new AppError(
-        "Event did not make it to supabase.",
+        `Event did not make it to supabase. ${error.message}`,
         500,
         "PERSIST_FAILED",
       );
