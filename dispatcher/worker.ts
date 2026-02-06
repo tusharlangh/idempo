@@ -14,6 +14,22 @@ function sleep(ms: number) {
 
 const retry = new Retry();
 
+let isShuttingDown = false;
+process.on("SIGINT", () => {
+  console.log("\nSHUTDOWN received, finishing current work");
+  isShuttingDown = true;
+});
+
+process.on("SIGTERM", () => {
+  console.log("\nSHUTDOWN received, finishing current work");
+  isShuttingDown = true;
+
+  setTimeout(() => {
+    console.error("SHUTDOWN - Forced exit after timeout");
+    process.exit(1);
+  }, 30000);
+});
+
 async function runContainer() {
   await retry.retry(() => run(), 3);
 }
@@ -22,6 +38,11 @@ async function run() {
   console.log("Worker started");
 
   while (true) {
+    if (isShuttingDown) {
+      console.log("SHUTDOWN - Exiting worker loop");
+      break;
+    }
+
     try {
       const { data, error } = (await supabase.rpc("clain_next_event")) as {
         data: EventProps[];
@@ -99,6 +120,9 @@ async function run() {
       await sleep(1000);
     }
   }
+
+  console.log("SHUTDOWN - Worker stopped cleanly");
+  process.exit(0);
 }
 
 await runContainer();

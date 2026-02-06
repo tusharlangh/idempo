@@ -7,6 +7,7 @@ import {
 } from "../services/dlq.service.ts";
 import { Retry } from "../utils/retry.ts";
 import { AppError } from "../middleware/errorHandler.ts";
+import supabase from "../utils/supabase/client.ts";
 
 const router = express.Router();
 
@@ -61,6 +62,38 @@ router.post("/dlq/:id/retry", async (req: Request, res: Response) => {
       data: null,
       error: `Failed to retry DLQ event for ${req.params.id}`,
     });
+  }
+});
+
+router.get("/events/:id", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase
+      .from("event")
+      .select()
+      .eq("id", req.params.id)
+      .single();
+
+    if (error || !data) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Event not found." });
+    }
+
+    const { data: dlqData, error: dlqError } = await supabase
+      .from("dead_letter_queue")
+      .select()
+      .eq("id", req.params.id)
+      .single();
+
+    return {
+      success: true,
+      data: {
+        event: data,
+        dlq: dlqData || null,
+      },
+    };
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch event" });
   }
 });
 
