@@ -28,6 +28,8 @@ export async function WebHookProvider(req: Request, res: Response) {
       throw new NotFoundError("Secret key is missing.");
     }
 
+    console.log(secretKey);
+
     const isSignatureValid = verifySignature(
       rawBody,
       //process.env.WEBHOOKSIGNATURE as string, //temp: but has to be signature
