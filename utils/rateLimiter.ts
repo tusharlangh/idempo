@@ -37,4 +37,9 @@ export class RateLimiter {
   private sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  getTokens() {
+    this.refill();
+    return this.tokens;
+  }
 }

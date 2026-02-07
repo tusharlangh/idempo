@@ -4,7 +4,8 @@
   "description": "1. event fetch (payload)",
   "scripts": {
     "start": "node server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -23,5 +24,11 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.1",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.2.2",
+    "vitest": "^4.0.18"
   }
 }

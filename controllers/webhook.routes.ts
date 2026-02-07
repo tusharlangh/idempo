@@ -30,7 +30,8 @@ export async function WebHookProvider(req: Request, res: Response) {
 
     const isSignatureValid = verifySignature(
       rawBody,
-      process.env.WEBHOOKSIGNATURE as string, //temp
+      //process.env.WEBHOOKSIGNATURE as string, //temp: but has to be signature
+      signature,
       secretKey,
     );
 
@@ -73,6 +74,14 @@ export async function WebHookProvider(req: Request, res: Response) {
     return res.status(202).json({ success: true, error: null });
   } catch (error) {
     console.error("webhook error: ", error);
+
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+      });
+    }
     return res.status(500).json({ success: false, error: "internal error" });
   }
 }
