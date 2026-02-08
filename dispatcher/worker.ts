@@ -8,10 +8,15 @@ import type { EventProps } from "../types/databse.ts";
 import { markIdempotencyKey } from "../services/idempotency.service.ts";
 import { moveToDeadLetter } from "../services/dlq.service.ts";
 import { RateLimiter } from "../utils/rateLimiter.ts";
+import { randomUUID } from "crypto";
+import { logDeliveryAttempt } from "../services/deliveryLogger.service.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+const WORKERID = `worker-${randomUUID().slice(0, 8)}`;
+console.log(`WORKER - Starting with ID: ${WORKERID}`);
 
 let isShuttingDown = false;
 process.on("SIGINT", () => {
@@ -33,7 +38,7 @@ process.on("SIGTERM", () => {
 });
 
 async function runContainer() {
-  await retry.retry(() => run(), 3);
+  await retry.retry((_attempt) => run(), 3);
 }
 
 async function run() {
@@ -46,39 +51,106 @@ async function run() {
     }
 
     try {
-      const { data, error } = (await supabase.rpc("clain_next_event")) as {
-        data: EventProps[];
-        error: any;
-      };
-      const event = data?.[0];
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-      if (error || !event) {
+      const { data: availableEvents, error: findError } = await supabase
+        .from("event")
+        .select("*")
+        .or(
+          `event_status.eq.RECEIVED,and(event_status.eq.PROCESSING,locked_at.lt.${fiveMinutesAgo})`,
+        )
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (findError || !availableEvents || availableEvents.length === 0) {
         console.log("No events found, sleeping for 1s");
         await sleep(1000);
         continue;
       }
 
+      const candidateEvent = availableEvents[0];
+
+      const { data: claimedEvents, error: claimError } = await supabase
+        .from("event")
+        .update({
+          event_status: "PROCESSING",
+          locked_at: new Date().toISOString(),
+          locked_by: WORKERID,
+        })
+        .eq("id", candidateEvent.id)
+        .eq("event_status", candidateEvent.event_status)
+        .select();
+
+      if (claimError || !claimedEvents || claimedEvents.length === 0) {
+        console.log("Event was claimed by another worker, retrying...");
+        continue;
+      }
+
+      const event = claimedEvents[0] as EventProps;
+
       console.log(`Processing event ID: ${event.id}`);
-      const DESTINATION_URL = "https://httpbin.org/status/20";
+      const DESTINATION_URL = "https://httpbin.org/status/500";
 
       await rateLimiter.acquire();
 
-      const { result, error_details } = await retry.retry(async () => {
-        const res = await fetch(DESTINATION_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(event.payload),
-        });
+      const { result, error_details } = await retry.retry(async (attempt) => {
+        console.log(`Attempt ${attempt} for event ${event.id}`);
+        const startedAt = new Date();
+        const requestHeaders = { "Content-Type": "application/json" };
 
-        if (!res.ok) {
-          throw new AppError(
-            `HTTP ${res.status}: ${res.statusText}`,
-            500,
-            "FAILED_DELIVERY",
+        try {
+          const res = await fetch(DESTINATION_URL, {
+            method: "POST",
+            headers: requestHeaders,
+            body: JSON.stringify(event.payload),
+          });
+
+          const responseBody = await res.text();
+
+          await logDeliveryAttempt(
+            {
+              eventId: event.id,
+              attemptNumber: attempt,
+              destinationUrl: DESTINATION_URL,
+              requestHeaders,
+              requestBody: event.payload,
+              startedAt,
+            },
+            {
+              statusCode: res.status,
+              responseBody: responseBody || `Status: ${res.status} ${res.statusText}`,
+              success: res.ok,
+            },
           );
-        }
 
-        return res;
+          if (!res.ok) {
+            throw new AppError(
+              `HTTP ${res.status}: ${res.statusText}`,
+              500,
+              "FAILED_DELIVERY",
+            );
+          }
+
+          return res;
+        } catch (error: any) {
+          if (error.code !== "FAILED_DELIVERY") {
+            await logDeliveryAttempt(
+              {
+                eventId: event.id,
+                attemptNumber: attempt,
+                destinationUrl: DESTINATION_URL,
+                requestHeaders,
+                requestBody: event.payload,
+                startedAt,
+              },
+              {
+                errorMessage: error.message || String(error),
+                success: false,
+              },
+            );
+          }
+          throw error;
+        }
       }, 3);
 
       const idempotencyKey = event.idempotency_key;
@@ -97,6 +169,8 @@ async function run() {
             event_status: "FAILED",
             error_details: error_details,
             failed_at: new Date(),
+            locked_at: null,
+            locked_by: null,
           })
           .eq("id", event.id);
 

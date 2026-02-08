@@ -20,7 +20,7 @@ export class RateLimiter {
     this.lastRefill = now;
   }
 
-  async acquire() {
+  async acquire(): Promise<void> {
     this.refill();
 
     if (this.tokens >= 1) {
@@ -31,7 +31,7 @@ export class RateLimiter {
     const waitTime = ((1 - this.tokens) / this.refillRate) * 1000;
     await this.sleep(waitTime);
 
-    this.acquire();
+    return this.acquire();
   }
 
   private sleep(ms: number) {

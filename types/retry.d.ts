@@ -1,5 +1,5 @@
 export interface HistoryProps {
-  func: () => void;
+  func: (attempt: number) => unknown;
   flag: FlagTypes;
   retry_attempts: RetryAttempProps[];
 }
