@@ -9,6 +9,7 @@ import { markIdempotencyKey } from "../services/idempotency.service.ts";
 import { moveToDeadLetter } from "../services/dlq.service.ts";
 import { RateLimiter } from "../utils/rateLimiter.ts";
 import { randomUUID } from "crypto";
+import { logDeliveryAttempt } from "../services/deliveryLogger.service.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,7 +38,7 @@ process.on("SIGTERM", () => {
 });
 
 async function runContainer() {
-  await retry.retry(() => run(), 3);
+  await retry.retry((_attempt) => run(), 3);
 }
 
 async function run() {
@@ -88,26 +89,68 @@ async function run() {
       const event = claimedEvents[0] as EventProps;
 
       console.log(`Processing event ID: ${event.id}`);
-      const DESTINATION_URL = "https://httpbin.org/status/200";
+      const DESTINATION_URL = "https://httpbin.org/status/500";
 
       await rateLimiter.acquire();
 
-      const { result, error_details } = await retry.retry(async () => {
-        const res = await fetch(DESTINATION_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(event.payload),
-        });
+      const { result, error_details } = await retry.retry(async (attempt) => {
+        console.log(`Attempt ${attempt} for event ${event.id}`);
+        const startedAt = new Date();
+        const requestHeaders = { "Content-Type": "application/json" };
 
-        if (!res.ok) {
-          throw new AppError(
-            `HTTP ${res.status}: ${res.statusText}`,
-            500,
-            "FAILED_DELIVERY",
+        try {
+          const res = await fetch(DESTINATION_URL, {
+            method: "POST",
+            headers: requestHeaders,
+            body: JSON.stringify(event.payload),
+          });
+
+          const responseBody = await res.text();
+
+          await logDeliveryAttempt(
+            {
+              eventId: event.id,
+              attemptNumber: attempt,
+              destinationUrl: DESTINATION_URL,
+              requestHeaders,
+              requestBody: event.payload,
+              startedAt,
+            },
+            {
+              statusCode: res.status,
+              responseBody: responseBody || `Status: ${res.status} ${res.statusText}`,
+              success: res.ok,
+            },
           );
-        }
 
-        return res;
+          if (!res.ok) {
+            throw new AppError(
+              `HTTP ${res.status}: ${res.statusText}`,
+              500,
+              "FAILED_DELIVERY",
+            );
+          }
+
+          return res;
+        } catch (error: any) {
+          if (error.code !== "FAILED_DELIVERY") {
+            await logDeliveryAttempt(
+              {
+                eventId: event.id,
+                attemptNumber: attempt,
+                destinationUrl: DESTINATION_URL,
+                requestHeaders,
+                requestBody: event.payload,
+                startedAt,
+              },
+              {
+                errorMessage: error.message || String(error),
+                success: false,
+              },
+            );
+          }
+          throw error;
+        }
       }, 3);
 
       const idempotencyKey = event.idempotency_key;

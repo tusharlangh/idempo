@@ -17,7 +17,7 @@ export class Retry {
   }
 
   async retry<T>(
-    func: () => T | Promise<T>,
+    func: (attempt: number) => T | Promise<T>,
     retries: number,
   ): Promise<{
     result: T | undefined;
@@ -33,7 +33,7 @@ export class Retry {
 
     while (true) {
       try {
-        result = await func();
+        result = await func(retryIndex);
         flag = "SUCCESS";
         break;
       } catch (error: any) {
