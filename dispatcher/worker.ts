@@ -88,8 +88,7 @@ async function run() {
 
       const event = claimedEvents[0] as EventProps;
 
-      console.log(`Processing event ID: ${event.id}`);
-      const DESTINATION_URL = "https://httpbin.org/status/500";
+      console.log(`Processing event ID: ${event.id} to ${event.destination_url}`);
 
       await rateLimiter.acquire();
 
@@ -99,7 +98,7 @@ async function run() {
         const requestHeaders = { "Content-Type": "application/json" };
 
         try {
-          const res = await fetch(DESTINATION_URL, {
+          const res = await fetch(event.destination_url, {
             method: "POST",
             headers: requestHeaders,
             body: JSON.stringify(event.payload),
@@ -111,7 +110,7 @@ async function run() {
             {
               eventId: event.id,
               attemptNumber: attempt,
-              destinationUrl: DESTINATION_URL,
+              destinationUrl: event.destination_url,
               requestHeaders,
               requestBody: event.payload,
               startedAt,
@@ -138,7 +137,7 @@ async function run() {
               {
                 eventId: event.id,
                 attemptNumber: attempt,
-                destinationUrl: DESTINATION_URL,
+                destinationUrl: event.destination_url,
                 requestHeaders,
                 requestBody: event.payload,
                 startedAt,

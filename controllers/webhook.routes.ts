@@ -13,6 +13,7 @@ export async function WebHookProvider(req: Request, res: Response) {
     const rawBody = (req as any).rawBody as Buffer;
     const signature = req.headers["x-webhook-signature"] as string;
     const idempotencyKey = req.header("Idempotency-key") as string;
+    const destinationUrl = req.header("X-Destination-URL") as string;
 
     const secretKey = process.env.WEBHOOKSECRET as string;
 
@@ -28,14 +29,23 @@ export async function WebHookProvider(req: Request, res: Response) {
       throw new NotFoundError("Secret key is missing.");
     }
 
+    if (!destinationUrl) {
+      throw new NotFoundError("X-Destination-URL header is required.");
+    }
+
+    try {
+      new URL(destinationUrl);
+    } catch {
+      throw new AppError(
+        "X-Destination-URL must be a valid URL.",
+        400,
+        "INVALID_URL",
+      );
+    }
+
     console.log(secretKey);
 
-    const isSignatureValid = verifySignature(
-      rawBody,
-      //process.env.WEBHOOKSIGNATURE as string, //temp: but has to be signature
-      signature,
-      secretKey,
-    );
+    const isSignatureValid = verifySignature(rawBody, signature, secretKey);
 
     if (!isSignatureValid) {
       throw new AppError(
@@ -61,6 +71,7 @@ export async function WebHookProvider(req: Request, res: Response) {
         payload: payload,
         event_status: "RECEIVED",
         idempotency_key: idempotencyKey,
+        destination_url: destinationUrl,
       })
       .select()
       .single();

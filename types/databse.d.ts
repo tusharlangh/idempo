@@ -7,6 +7,7 @@ export interface EventProps {
   error_details: ErrorDetailsProps;
   failed_at: Date;
   idempotency_key: string;
+  destination_url: string;
   locked_at: Date | null;
   locked_by: string | null;
   created_at: Date;
