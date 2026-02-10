@@ -42,105 +42,82 @@ Built in health and readiness endpoints for monitoring. The `/health/ready` endp
 | --------- | ----------------------- |
 | Runtime   | Node.js with TypeScript |
 | Framework | Express 5               |
-| Database  | PostgreSQL via Supabase |
+| Database  | PostgreSQL              |
 | Testing   | Vitest with 54 tests    |
 | Auth      | HMAC SHA256 signatures  |
 
-## Getting Started
-
-### Prerequisites
-
-You need Node.js and a Supabase project.
-
-### Setup
+## Quickstart
 
 ```bash
 git clone https://github.com/tusharlangh/idempo.git
 cd idempo
+cp .env.example .env
+docker compose up
+```
+
+The system will:
+
+1. Start PostgreSQL
+2. Run migrations automatically
+3. Start the API server on port 3000
+4. Start 2 background workers
+
+### Local Development
+
+For local development without Docker:
+
+```bash
 npm install
+docker compose up -d db
+npm run migrate
+npm start
+npm run worker
 ```
 
-Create a `.env` file:
+### Configuration
 
-```
-SUPABASE_URL=your_supabase_url
-SUPABASE_ANON_KEY=your_anon_key
+Edit `.env`:
+
+```bash
 WEBHOOKSECRET=your_webhook_secret
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/idempo
 PORT=3000
 ```
 
-### Database Setup
+### Testing
 
-Run these in the Supabase SQL editor:
-
-```sql
-create table event (
-  id uuid default gen_random_uuid() primary key,
-  payload jsonb not null,
-  event_status text not null default 'RECEIVED',
-  idempotency_key text,
-  destination_url text not null,
-  error_details jsonb,
-  failed_at timestamptz,
-  locked_at timestamptz,
-  locked_by text,
-  created_at timestamptz default now()
-);
-
-create table idempotency_keys (
-  id uuid default gen_random_uuid() primary key,
-  key text unique not null,
-  request_hash text not null,
-  status text not null default 'PROCESSING',
-  response_status int,
-  response_body jsonb,
-  locked_at timestamptz,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-create table dead_letter_queue (
-  id uuid default gen_random_uuid() primary key,
-  original_event_id uuid references event(id),
-  idempotency_key text,
-  payload jsonb,
-  error_details jsonb,
-  status text default 'PENDING',
-  retry_count int default 0,
-  failed_at timestamptz default now(),
-  resolved_at timestamptz,
-  created_at timestamptz default now()
-);
-
-create table delivery_attempts (
-  id uuid default gen_random_uuid() primary key,
-  event_id uuid references event(id),
-  attempt_number int not null,
-  destination_url text not null,
-  request_headers jsonb,
-  request_body jsonb,
-  status_code int,
-  response_body text,
-  error_message text,
-  started_at timestamptz not null,
-  completed_at timestamptz,
-  latency_ms int,
-  success boolean not null,
-  created_at timestamptz default now()
-);
-```
-
-### Run
+Send a test webhook:
 
 ```bash
-# Start the server
-npm start
+./test-webhook.sh
+```
 
-# Start a worker (in a separate terminal)
-npx tsx dispatcher/worker.ts
+Or manually:
 
-# Run tests
-npm test
+```bash
+PAYLOAD='{"test": 1}'
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "supersecret" | awk '{print $2}')
+
+curl -X POST http://localhost:3000/webhooks \
+  -H "Content-Type: application/json" \
+  -H "X-Destination-URL: https://httpbin.org/post" \
+  -H "x-webhook-signature: $SIGNATURE" \
+  -H "Idempotency-key: test-$(date +%s)" \
+  -d "$PAYLOAD"
+```
+
+Check worker logs:
+
+```bash
+docker logs -f idempo-worker-1
+```
+
+### Scaling
+
+Run more workers:
+
+```bash
+docker compose up -d --scale worker=5
 ```
 
 ## API Reference

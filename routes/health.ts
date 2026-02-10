@@ -1,6 +1,5 @@
 import express, { type Request, type Response } from "express";
 import { getDBStatus, getHealthStatus } from "../services/health.service.ts";
-import supabase from "../utils/supabase/client.ts";
 
 const router = express.Router();
 
@@ -11,7 +10,7 @@ router.get("/ready", async (req: Request, res: Response) => {
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, data: null, error: "Failed to fetch DLQ" });
+      .json({ success: false, data: null, error: "Health check failed" });
   }
 });
 
@@ -22,7 +21,7 @@ router.get("/db-connection", async (req: Request, res: Response) => {
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, data: null, error: "Failed to fetch DLQ" });
+      .json({ success: false, data: null, error: "DB check failed" });
   }
 });
 

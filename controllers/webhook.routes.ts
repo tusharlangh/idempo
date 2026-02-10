@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import { AppError, NotFoundError } from "../middleware/errorHandler.ts";
 import type { CanonicalEvent } from "../types/event.ts";
 import { v4 as uuidv4 } from "uuid";
-import supabase from "../utils/supabase/client.ts";
+import { query } from "../db/pool.ts";
 
 dotenv.config();
 
@@ -43,8 +43,6 @@ export async function WebHookProvider(req: Request, res: Response) {
       );
     }
 
-    console.log(secretKey);
-
     const isSignatureValid = verifySignature(rawBody, signature, secretKey);
 
     if (!isSignatureValid) {
@@ -65,20 +63,16 @@ export async function WebHookProvider(req: Request, res: Response) {
       },
     };
 
-    const { data, error } = await supabase
-      .from("event")
-      .insert({
-        payload: payload,
-        event_status: "RECEIVED",
-        idempotency_key: idempotencyKey,
-        destination_url: destinationUrl,
-      })
-      .select()
-      .single();
+    const { rows } = await query(
+      `INSERT INTO event (payload, event_status, idempotency_key, destination_url)
+       VALUES ($1, 'RECEIVED', $2, $3)
+       RETURNING *`,
+      [JSON.stringify(payload), idempotencyKey, destinationUrl],
+    );
 
-    if (error) {
+    if (rows.length === 0) {
       throw new AppError(
-        `Event did not make it to supabase. ${error.message}`,
+        "Event did not persist to database",
         500,
         "PERSIST_FAILED",
       );

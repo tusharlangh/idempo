@@ -1,35 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { moveToDeadLetter, getPendingDLQEvents } from "./dlq.service.ts";
 
-vi.mock("../utils/supabase/client.ts", () => ({
-  default: {
-    from: vi.fn(() => ({
-      insert: vi.fn(() => ({
-        select: vi.fn(() => ({
-          single: vi.fn(() =>
-            Promise.resolve({
-              data: { id: "dlq-123", status: "PENDING" },
-              error: null,
-            }),
-          ),
-        })),
-      })),
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          order: vi.fn(() =>
-            Promise.resolve({
-              data: [{ id: "dlq-1" }, { id: "dlq-2" }],
-              error: null,
-            }),
-          ),
-        })),
-      })),
-    })),
-  },
+const mockQuery = vi.fn();
+
+vi.mock("../db/pool.ts", () => ({
+  query: (...args: any[]) => mockQuery(...args),
 }));
 
 describe("DLQ Service", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("should move event to dead letter queue", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "dlq-123", status: "PENDING" }],
+    });
+
     const result = await moveToDeadLetter(
       "event-123",
       "idem-key-456",
@@ -42,6 +29,10 @@ describe("DLQ Service", () => {
   });
 
   it("should get pending DLQ events", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "dlq-1" }, { id: "dlq-2" }],
+    });
+
     const events = await getPendingDLQEvents();
 
     expect(events).toHaveLength(2);

@@ -1,5 +1,5 @@
 import { AppError } from "../middleware/errorHandler.ts";
-import supabase from "../utils/supabase/client.ts";
+import { query } from "../db/pool.ts";
 
 export interface LogDeliveryParams {
   eventId: string;
@@ -24,24 +24,30 @@ export async function logDeliveryAttempt(
   const completedAt = new Date();
   const latencyMs = completedAt.getTime() - params.startedAt.getTime();
 
-  const { error } = await supabase.from("delivery_attempts").insert({
-    event_id: params.eventId,
-    attempt_number: params.attemptNumber,
-    destination_url: params.destinationUrl,
-    request_headers: params.requestHeaders,
-    request_body: params.requestBody,
-    status_code: result.statusCode || null,
-    response_body: result.responseBody?.slice(0, 1000) || null,
-    error_message: result.errorMessage || null,
-    started_at: params.startedAt.toISOString(),
-    completed_at: completedAt.toISOString(),
-    latency_ms: latencyMs,
-    success: result.success,
-  });
+  const { rowCount } = await query(
+    `INSERT INTO delivery_attempts
+       (event_id, attempt_number, destination_url, request_headers, request_body,
+        status_code, response_body, error_message, started_at, completed_at, latency_ms, success)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      params.eventId,
+      params.attemptNumber,
+      params.destinationUrl,
+      JSON.stringify(params.requestHeaders),
+      JSON.stringify(params.requestBody),
+      result.statusCode || null,
+      result.responseBody?.slice(0, 1000) || null,
+      result.errorMessage || null,
+      params.startedAt.toISOString(),
+      completedAt.toISOString(),
+      latencyMs,
+      result.success,
+    ],
+  );
 
-  if (error) {
+  if (rowCount === 0) {
     throw new AppError(
-      `Failed to log delivery attempt: ${error?.message}`,
+      "Failed to log delivery attempt",
       400,
       "FAILED_LOG_DELIVERY",
     );
@@ -49,16 +55,14 @@ export async function logDeliveryAttempt(
 }
 
 export async function getDeliveryAttempts(eventId: string) {
-  const { data, error } = await supabase
-    .from("delivery_attempts")
-    .select("*")
-    .eq("event_id", eventId)
-    .order("attempt_number", { ascending: true });
-
-  if (error) {
+  try {
+    const { rows } = await query(
+      `SELECT * FROM delivery_attempts WHERE event_id = $1 ORDER BY attempt_number ASC`,
+      [eventId],
+    );
+    return rows;
+  } catch (error) {
     console.error("Failed to get delivery attempts: ", error);
     return [];
   }
-
-  return data;
 }
