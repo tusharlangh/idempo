@@ -88,7 +88,9 @@ async function run() {
 
       const event = claimedEvents[0] as EventProps;
 
-      console.log(`Processing event ID: ${event.id} to ${event.destination_url}`);
+      console.log(
+        `Processing event ID: ${event.id} to ${event.destination_url}`,
+      );
 
       await rateLimiter.acquire();
 
@@ -117,7 +119,8 @@ async function run() {
             },
             {
               statusCode: res.status,
-              responseBody: responseBody || `Status: ${res.status} ${res.statusText}`,
+              responseBody:
+                responseBody || `Status: ${res.status} ${res.statusText}`,
               success: res.ok,
             },
           );
@@ -168,8 +171,6 @@ async function run() {
             event_status: "FAILED",
             error_details: error_details,
             failed_at: new Date(),
-            locked_at: null,
-            locked_by: null,
           })
           .eq("id", event.id);
 
