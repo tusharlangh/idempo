@@ -3,6 +3,7 @@ import routes from "./routes/webhook.ts";
 import dlqRoutes from "./routes/admin.ts";
 import healthRoutes from "./routes/health.ts";
 import { errorHandler } from "./middleware/errorHandler.ts";
+import { apiLogger } from "./utils/logger.ts";
 
 const app = express();
 
@@ -22,7 +23,7 @@ app.use(errorHandler);
 const port = Number(process.env.PORT) || 3000;
 
 app.listen(port, "0.0.0.0", () => {
-  console.log(`Webhook server listening on port ${port}`);
+  apiLogger.info({ port }, "Server started");
 });
 
 export default app;

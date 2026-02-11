@@ -10,17 +10,20 @@ import { moveToDeadLetter } from "../services/dlq.service.ts";
 import { RateLimiter } from "../utils/rateLimiter.ts";
 import { randomUUID } from "crypto";
 import { logDeliveryAttempt } from "../services/deliveryLogger.service.ts";
+import { workerLogger } from "../utils/logger.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const WORKERID = `worker-${randomUUID().slice(0, 8)}`;
-console.log(`WORKER - Starting with ID: ${WORKERID}`);
+const log = workerLogger.child({ workerId: WORKERID });
+
+log.info({ WORKERID }, "Worker started");
 
 let isShuttingDown = false;
 process.on("SIGINT", () => {
-  console.log("\nSHUTDOWN received, finishing current work");
+  log.info("SHUTDOWN received, finishing current work");
   isShuttingDown = true;
 });
 
@@ -28,11 +31,11 @@ const retry = new Retry();
 const rateLimiter = new RateLimiter(10, 10);
 
 process.on("SIGTERM", () => {
-  console.log("\nSHUTDOWN received, finishing current work");
+  log.info("SHUTDOWN received, finishing current work");
   isShuttingDown = true;
 
   setTimeout(() => {
-    console.error("SHUTDOWN - Forced exit after timeout");
+    log.error("SHUTDOWN - Forced exit after timeout");
     process.exit(1);
   }, 30000);
 });
@@ -63,11 +66,11 @@ async function runContainer() {
 }
 
 async function run() {
-  console.log("Worker started");
+  log.info("Worker started");
 
   while (true) {
     if (isShuttingDown) {
-      console.log("SHUTDOWN - Exiting worker loop");
+      log.info("SHUTDOWN - Exiting worker loop");
       break;
     }
 
@@ -79,14 +82,15 @@ async function run() {
         continue;
       }
 
-      console.log(
-        `Processing event ID: ${event.id} to ${event.destination_url}`,
+      log.info(
+        { eventId: event.id, destinationUrl: event.destination_url },
+        "Processing event",
       );
 
       await rateLimiter.acquire();
 
       const { result, error_details } = await retry.retry(async (attempt) => {
-        console.log(`Attempt ${attempt} for event ${event.id}`);
+        log.info({ eventId: event.id, attempt }, "Delivery attempt");
         const startedAt = new Date();
         const requestHeaders = { "Content-Type": "application/json" };
 
@@ -165,8 +169,10 @@ async function run() {
           success: false,
           action: "FAILED",
         });
-
-        console.error(`Event ${event.id} failed after retries:`, error_details);
+        log.error(
+          { eventId: event.id, errorDetails: error_details },
+          "Event failed after retires",
+        );
       } else {
         await query(
           `UPDATE event SET event_status = 'DELIVERED' WHERE id = $1`,
@@ -178,15 +184,14 @@ async function run() {
           action: "PROCESSED",
         });
 
-        console.log(`Event ${event.id} delivered successfully`);
+        log.info({ eventId: event.id }, "Event delivered successfully");
       }
     } catch (error) {
-      console.error("Worker error:", error);
+      log.error({ error: error }, "Worker error");
       await sleep(1000);
     }
   }
-
-  console.log("SHUTDOWN - Worker stopped cleanly");
+  log.info("Shutdown worker stopped cleanly");
   await pool.end();
   process.exit(0);
 }

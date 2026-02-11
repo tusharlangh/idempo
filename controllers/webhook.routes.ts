@@ -5,6 +5,7 @@ import { AppError, NotFoundError } from "../middleware/errorHandler.ts";
 import type { CanonicalEvent } from "../types/event.ts";
 import { v4 as uuidv4 } from "uuid";
 import { query } from "../db/pool.ts";
+import { apiLogger } from "../utils/logger.ts";
 
 dotenv.config();
 
@@ -80,7 +81,7 @@ export async function WebHookProvider(req: Request, res: Response) {
 
     return res.status(202).json({ success: true, error: null });
   } catch (error) {
-    console.error("webhook error: ", error);
+    apiLogger.error({ error: error }, "Webhook error");
 
     if (error instanceof AppError) {
       return res.status(error.statusCode).json({
