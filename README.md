@@ -38,13 +38,31 @@ Built in health and readiness endpoints for monitoring. The `/health/ready` endp
 
 ## Tech Stack
 
-| Component | Technology              |
-| --------- | ----------------------- |
-| Runtime   | Node.js with TypeScript |
-| Framework | Express 5               |
-| Database  | PostgreSQL              |
-| Testing   | Vitest with 54 tests    |
-| Auth      | HMAC SHA256 signatures  |
+| Component    | Technology              |
+| ------------ | ----------------------- |
+| Runtime      | Node.js with TypeScript |
+| Framework    | Express 5               |
+| Database     | PostgreSQL              |
+| Containers   | Docker Compose          |
+| Logging      | Pino (structured JSON)  |
+| Testing      | Vitest with 54 tests    |
+| Load Testing | K6                      |
+| Auth         | HMAC SHA256 signatures  |
+
+## Performance
+
+Load tested with K6 across 3 scenarios: smoke (5 VUs), ramp to 50 VUs, and spike to 100 VUs.
+
+| Metric               | Result        |
+| -------------------- | ------------- |
+| Total Requests       | 30,533        |
+| Throughput           | 339 req/s     |
+| Avg Latency          | 5.46ms        |
+| P95 Latency          | 14.40ms       |
+| Failure Rate         | 0.00%         |
+| Projected Events/hr  | 1,220,443     |
+
+
 
 ## Quickstart
 
@@ -177,14 +195,23 @@ GET /health/db-connection      # Database connectivity check
 
 ## How Worker Scaling Works
 
-The workers dont need any coordination service like Redis or Zookeeper. Each worker independently polls the database for available events. The trick is in how they claim events:
+The workers dont need any coordination service like Redis or Zookeeper. Each worker independently polls the database for available events using PostgreSQL's `FOR UPDATE SKIP LOCKED`:
 
-1. Worker finds an event with status RECEIVED
-2. Worker updates the event to PROCESSING with a conditional `WHERE status = RECEIVED`
-3. If the update affected 0 rows, another worker already got it. Move on.
-4. If the update succeeded, this worker owns the event
+```sql
+UPDATE event
+SET event_status = 'PROCESSING', locked_at = NOW(), locked_by = $1
+WHERE id = (
+  SELECT id FROM event
+  WHERE event_status = 'RECEIVED'
+     OR (event_status = 'PROCESSING' AND locked_at < NOW() - INTERVAL '5 minutes')
+  ORDER BY created_at ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING *
+```
 
-This is optimistic concurrency control. It works because the database guarantees that only one UPDATE can succeed when multiple try to change the same row simultaneously.
+`SKIP LOCKED` means if another worker already locked a row, this worker skips it instantly instead of waiting. This gives you lock-free horizontal scaling with zero contention. Workers never block each other and never process the same event twice.
 
 ## Testing
 
@@ -210,7 +237,7 @@ npm test
 
 The hardest thing about this project was getting the concurrency right. When you have multiple workers polling the same database for events, theres a real chance two of them grab the same event at the exact same time. My first attempt used a simple SELECT then UPDATE which had a race condition I didnt notice until I ran two workers simultaneously and saw duplicate deliveries.
 
-The fix was using optimistic locking where the UPDATE includes a WHERE clause that checks the current status. So even if two workers SELECT the same event, only one of their UPDATEs will actually match and the other silently fails. It sounds simple in retrospect but figuring out why events were being delivered twice took me a while.
+The fix was switching to `FOR UPDATE SKIP LOCKED` which atomically claims an event in a single query. Workers never block each other and never process the same event twice. It sounds simple in retrospect but figuring out why events were being delivered twice and landing on the right PostgreSQL primitive took me a while.
 
 The idempotency key system was also tricky because you have to handle so many edge cases. What if the key exists but with a different body? What if the previous request crashed mid processing and the key is stuck in PROCESSING forever? I ended up implementing a lock timeout so stale keys get reclaimed after 60 seconds which handles the crash recovery case.
 
