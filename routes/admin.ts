@@ -7,7 +7,7 @@ import {
 } from "../services/dlq.service.ts";
 import { Retry } from "../utils/retry.ts";
 import { AppError } from "../middleware/errorHandler.ts";
-import supabase from "../utils/supabase/client.ts";
+import { query } from "../db/pool.ts";
 
 const router = express.Router();
 
@@ -67,33 +67,52 @@ router.post("/dlq/:id/retry", async (req: Request, res: Response) => {
 
 router.get("/events/:id", async (req: Request, res: Response) => {
   try {
-    const { data, error } = await supabase
-      .from("event")
-      .select()
-      .eq("id", req.params.id)
-      .single();
+    const { rows: eventRows } = await query(
+      `SELECT * FROM event WHERE id = $1`,
+      [req.params.id],
+    );
 
-    if (error || !data) {
+    if (eventRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, error: "Event not found." });
     }
 
-    const { data: dlqData, error: dlqError } = await supabase
-      .from("dead_letter_queue")
-      .select()
-      .eq("id", req.params.id)
-      .single();
+    const { rows: dlqRows } = await query(
+      `SELECT * FROM dead_letter_queue WHERE original_event_id = $1`,
+      [req.params.id],
+    );
 
-    return {
+    return res.json({
       success: true,
       data: {
-        event: data,
-        dlq: dlqData || null,
+        event: eventRows[0],
+        dlq: dlqRows[0] || null,
       },
-    };
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: "Failed to fetch event" });
+  }
+});
+
+router.get("/events", async (req: Request, res: Response) => {
+  try {
+    const { rows: eventRows } = await query(`SELECT * FROM event`);
+
+    if (eventRows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Event not found." });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        events: eventRows,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch events" });
   }
 });
 

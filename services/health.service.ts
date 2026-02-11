@@ -1,4 +1,4 @@
-import supabase from "../utils/supabase/client.ts";
+import { query } from "../db/pool.ts";
 
 export async function getHealthStatus() {
   const startTime = process.uptime();
@@ -11,10 +11,10 @@ export async function getHealthStatus() {
 }
 
 export async function getDBStatus() {
-  const { error } = await supabase.from("event").select("id").limit(1);
-
-  return {
-    ready: !error,
-    db_connection: error ? "disconnected" : "connected",
-  };
+  try {
+    await query("SELECT 1");
+    return { ready: true, db_connection: "connected" };
+  } catch {
+    return { ready: false, db_connection: "disconnected" };
+  }
 }

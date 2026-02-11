@@ -23,7 +23,6 @@ describe("webhook", () => {
         "x-webhook-signature",
         "cebd6cf821fafdf6ea43f957c4316d2856bf33306e237bf66540e3afa75e6584",
       )
-      .set("Idempotency-key", "testing-missing-url")
       .send({ test: 1 });
 
     expect(response.status).toBe(404);
@@ -38,7 +37,6 @@ describe("webhook", () => {
         "x-webhook-signature",
         "cebd6cf821fafdf6ea43f957c4316d2856bf33306e237bf66540e3afa75e6584",
       )
-      .set("Idempotency-key", "testing-invalid-url")
       .set("X-Destination-URL", "not-a-valid-url")
       .send({ test: 1 });
 

@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: idempo-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: idempo
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: .
+    container_name: idempo-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/idempo
+    depends_on:
+      db:
+        condition: service_healthy
+    command: npx tsx db/migrate.ts
+    restart: on-failure
+
+  api:
+    build: .
+    container_name: idempo-api
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/idempo
+      WEBHOOKSECRET: ${WEBHOOKSECRET:-supersecret}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: npx tsx server.ts
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health/ready').then(r => r.ok ? process.exit(0) : process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/idempo
+      WEBHOOKSECRET: ${WEBHOOKSECRET:-supersecret}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: npx tsx dispatcher/worker.ts
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+volumes:
+  postgres_data:

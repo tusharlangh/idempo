@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import supabase from "../utils/supabase/client.ts";
+import pool, { query, transaction } from "../db/pool.ts";
 import { Retry } from "../utils/retry.ts";
 import { AppError } from "../middleware/errorHandler.ts";
 import type { EventProps } from "../types/databse.ts";
@@ -37,6 +37,27 @@ process.on("SIGTERM", () => {
   }, 30000);
 });
 
+async function claimEvent(): Promise<EventProps | null> {
+  return transaction(async (client) => {
+    const { rows } = await client.query<EventProps>(
+      `UPDATE event
+       SET event_status = 'PROCESSING', locked_at = NOW(), locked_by = $1
+       WHERE id = (
+         SELECT id FROM event
+         WHERE event_status = 'RECEIVED'
+            OR (event_status = 'PROCESSING' AND locked_at < NOW() - INTERVAL '5 minutes')
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [WORKERID],
+    );
+
+    return rows[0] || null;
+  });
+}
+
 async function runContainer() {
   await retry.retry((_attempt) => run(), 3);
 }
@@ -51,42 +72,12 @@ async function run() {
     }
 
     try {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const event = await claimEvent();
 
-      const { data: availableEvents, error: findError } = await supabase
-        .from("event")
-        .select("*")
-        .or(
-          `event_status.eq.RECEIVED,and(event_status.eq.PROCESSING,locked_at.lt.${fiveMinutesAgo})`,
-        )
-        .order("created_at", { ascending: true })
-        .limit(1);
-
-      if (findError || !availableEvents || availableEvents.length === 0) {
-        console.log("No events found, sleeping for 1s");
+      if (!event) {
         await sleep(1000);
         continue;
       }
-
-      const candidateEvent = availableEvents[0];
-
-      const { data: claimedEvents, error: claimError } = await supabase
-        .from("event")
-        .update({
-          event_status: "PROCESSING",
-          locked_at: new Date().toISOString(),
-          locked_by: WORKERID,
-        })
-        .eq("id", candidateEvent.id)
-        .eq("event_status", candidateEvent.event_status)
-        .select();
-
-      if (claimError || !claimedEvents || claimedEvents.length === 0) {
-        console.log("Event was claimed by another worker, retrying...");
-        continue;
-      }
-
-      const event = claimedEvents[0] as EventProps;
 
       console.log(
         `Processing event ID: ${event.id} to ${event.destination_url}`,
@@ -165,14 +156,10 @@ async function run() {
           error_details,
         );
 
-        await supabase
-          .from("event")
-          .update({
-            event_status: "FAILED",
-            error_details: error_details,
-            failed_at: new Date(),
-          })
-          .eq("id", event.id);
+        await query(
+          `UPDATE event SET event_status = 'FAILED', error_details = $1, failed_at = NOW() WHERE id = $2`,
+          [JSON.stringify(error_details), event.id],
+        );
 
         await markIdempotencyKey("FAILED", idempotencyKey, 400, {
           success: false,
@@ -181,10 +168,10 @@ async function run() {
 
         console.error(`Event ${event.id} failed after retries:`, error_details);
       } else {
-        await supabase
-          .from("event")
-          .update({ event_status: "DELIVERED" })
-          .eq("id", event.id);
+        await query(
+          `UPDATE event SET event_status = 'DELIVERED' WHERE id = $1`,
+          [event.id],
+        );
 
         await markIdempotencyKey("PROCESSED", idempotencyKey, 200, {
           success: true,
@@ -200,6 +187,7 @@ async function run() {
   }
 
   console.log("SHUTDOWN - Worker stopped cleanly");
+  await pool.end();
   process.exit(0);
 }
 

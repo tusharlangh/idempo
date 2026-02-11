@@ -1,7 +1,7 @@
 import { AppError } from "../middleware/errorHandler.ts";
 import type { DLQEventProps } from "../types/databse.d.ts";
 import type { ErrorDetailsProps } from "../types/retry.js";
-import supabase from "../utils/supabase/client.ts";
+import { query } from "../db/pool.ts";
 
 export async function moveToDeadLetter(
   eventId: string,
@@ -9,62 +9,47 @@ export async function moveToDeadLetter(
   payload: any,
   errorDetails: ErrorDetailsProps,
 ) {
-  const { data, error } = (await supabase
-    .from("dead_letter_queue")
-    .insert({
-      original_event_id: eventId,
-      idempotency_key: idempotencyKey,
-      payload: payload,
-      error_details: errorDetails,
-      failed_at: new Date(),
-    })
-    .select()
-    .single()) as { data: DLQEventProps; error: any };
+  const { rows } = await query<DLQEventProps>(
+    `INSERT INTO dead_letter_queue (original_event_id, idempotency_key, payload, error_details, failed_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     RETURNING *`,
+    [eventId, idempotencyKey, JSON.stringify(payload), JSON.stringify(errorDetails)],
+  );
 
-  if (error) {
+  if (rows.length === 0) {
     throw new AppError(
-      `Failed to push failed event into DLQ ${error.message}`,
+      "Failed to push failed event into DLQ",
       500,
       "FAILED_PUSH_TO_DLQ",
     );
   }
 
-  return data;
+  return rows[0];
 }
 
 export async function getPendingDLQEvents() {
-  const { data, error } = await supabase
-    .from("dead_letter_queue")
-    .select("*")
-    .eq("status", "PENDING")
-    .order("failed_at", { ascending: true });
-
-  if (error) {
-    throw new AppError(
-      "Failed to get pending DLQEventProps from DLQ",
-      500,
-      "FAILED_GET_DLQ",
-    );
-  }
-
-  return data;
+  const { rows } = await query(
+    `SELECT * FROM dead_letter_queue WHERE status = 'PENDING' ORDER BY failed_at ASC`,
+  );
+  return rows;
 }
 
 export async function retryDLQEvent(dlqId: string, destinationUrl: string) {
-  const { data: dlqEvent, error: fetchError } = await supabase
-    .from("dead_letter_queue")
-    .select("*")
-    .eq("id", dlqId)
-    .single();
+  const { rows } = await query(
+    `SELECT * FROM dead_letter_queue WHERE id = $1`,
+    [dlqId],
+  );
 
-  if (fetchError || !dlqEvent) {
+  const dlqEvent = rows[0];
+
+  if (!dlqEvent) {
     throw new AppError("DLQ event not found", 404, "DLQ_NOT_FOUND");
   }
 
-  await supabase
-    .from("dead_letter_queue")
-    .update({ status: "RETRYING" })
-    .eq("id", dlqId);
+  await query(
+    `UPDATE dead_letter_queue SET status = 'RETRYING' WHERE id = $1`,
+    [dlqId],
+  );
 
   try {
     const res = await fetch(destinationUrl, {
@@ -76,35 +61,33 @@ export async function retryDLQEvent(dlqId: string, destinationUrl: string) {
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
-    await supabase
-      .from("dead_letter_queue")
-      .update({ status: "RESOLVED", resolved_at: new Date() })
-      .eq("id", dlqId);
+
+    await query(
+      `UPDATE dead_letter_queue SET status = 'RESOLVED', resolved_at = NOW() WHERE id = $1`,
+      [dlqId],
+    );
 
     return { success: true };
   } catch (error: any) {
     const newRetryCount = dlqEvent.retry_count + 1;
     const maxRetries = 3;
 
-    await supabase
-      .from("dead_letter_queue")
-      .update({
-        status: newRetryCount >= maxRetries ? "ABANDONED" : "PENDING",
-        retry_count: newRetryCount,
-      })
-      .eq("id", dlqId);
+    await query(
+      `UPDATE dead_letter_queue SET status = $1, retry_count = $2 WHERE id = $3`,
+      [newRetryCount >= maxRetries ? "ABANDONED" : "PENDING", newRetryCount, dlqId],
+    );
 
     return { success: false, error: error.message };
   }
 }
 
 export async function resolveDLQEvent(dlqId: string) {
-  const { data, error } = await supabase
-    .from("dead_letter_queue")
-    .update({ status: "RESOLVED", resolved_at: new Date() })
-    .eq("id", dlqId);
+  const { rowCount } = await query(
+    `UPDATE dead_letter_queue SET status = 'RESOLVED', resolved_at = NOW() WHERE id = $1`,
+    [dlqId],
+  );
 
-  if (error) {
+  if (rowCount === 0) {
     throw new AppError(
       "Failed to mark resolved dlq event",
       500,
@@ -114,14 +97,14 @@ export async function resolveDLQEvent(dlqId: string) {
 }
 
 export async function abandonDLQEvent(dlqId: string) {
-  const { data, error } = await supabase
-    .from("dead_letter_queue")
-    .update({ status: "ABANDONED" })
-    .eq("id", dlqId);
+  const { rowCount } = await query(
+    `UPDATE dead_letter_queue SET status = 'ABANDONED' WHERE id = $1`,
+    [dlqId],
+  );
 
-  if (error) {
+  if (rowCount === 0) {
     throw new AppError(
-      "Failed to mark resolved dlq event",
+      "Failed to abandon dlq event",
       500,
       "FAILED_RESOLVED_DLQ",
     );

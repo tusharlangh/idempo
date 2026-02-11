@@ -4,45 +4,11 @@ import {
   markIdempotencyKey,
 } from "./idempotency.service.ts";
 
-const mockInsert = vi.fn();
-const mockSelect = vi.fn();
-const mockSingle = vi.fn();
-const mockUpdate = vi.fn();
-const mockEq = vi.fn();
-const mockSelectEq = vi.fn();
-const mockSelectSingle = vi.fn();
+const mockQuery = vi.fn();
 
-vi.mock("../utils/supabase/client.ts", () => ({
-  default: {
-    from: vi.fn(() => ({
-      insert: mockInsert,
-      select: mockSelect,
-      update: mockUpdate,
-    })),
-  },
+vi.mock("../db/pool.ts", () => ({
+  query: (...args: any[]) => mockQuery(...args),
 }));
-
-function setupInsertResult(data: any, error: any) {
-  mockInsert.mockReturnValue({
-    select: vi.fn().mockReturnValue({
-      single: vi.fn().mockResolvedValue({ data, error }),
-    }),
-  });
-}
-
-function setupSelectResult(data: any) {
-  mockSelect.mockReturnValue({
-    eq: vi.fn().mockReturnValue({
-      single: vi.fn().mockResolvedValue({ data, error: null }),
-    }),
-  });
-}
-
-function setupUpdateResult(error: any) {
-  mockUpdate.mockReturnValue({
-    eq: vi.fn().mockResolvedValue({ error }),
-  });
-}
 
 describe("acquireIdempotencyKey", () => {
   beforeEach(() => {
@@ -50,7 +16,7 @@ describe("acquireIdempotencyKey", () => {
   });
 
   it("returns PROCEED when key is new", async () => {
-    setupInsertResult({ key: "new-key", status: "PROCESSING" }, null);
+    mockQuery.mockResolvedValueOnce({ rows: [{ key: "new-key" }], rowCount: 1 });
 
     const result = await acquireIdempotencyKey("new-key", { data: "test" });
 
@@ -59,12 +25,19 @@ describe("acquireIdempotencyKey", () => {
   });
 
   it("returns HASHED_MISMATCH when same key has different body", async () => {
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult({
-      key: "existing-key",
-      request_hash: "different-hash",
-      status: "PROCESSING",
-      locked_at: new Date().toISOString(),
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: "existing-key",
+          request_hash: "different-hash",
+          status: "PROCESSING",
+          locked_at: new Date().toISOString(),
+        },
+      ],
     });
 
     const result = await acquireIdempotencyKey("existing-key", {
@@ -80,13 +53,20 @@ describe("acquireIdempotencyKey", () => {
     const body = { data: "test" };
     const hash = hashRequestBody(body);
 
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult({
-      key: "processed-key",
-      request_hash: hash,
-      status: "PROCESSED",
-      response_status: 202,
-      response_body: { success: true, action: "processed" },
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: "processed-key",
+          request_hash: hash,
+          status: "PROCESSED",
+          response_status: 202,
+          response_body: { success: true, action: "processed" },
+        },
+      ],
     });
 
     const result = await acquireIdempotencyKey("processed-key", body);
@@ -105,13 +85,20 @@ describe("acquireIdempotencyKey", () => {
     const body = { data: "test" };
     const hash = hashRequestBody(body);
 
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult({
-      key: "failed-key",
-      request_hash: hash,
-      status: "FAILED",
-      response_status: 500,
-      response_body: { success: false, action: "failed" },
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: "failed-key",
+          request_hash: hash,
+          status: "FAILED",
+          response_status: 500,
+          response_body: { success: false, action: "failed" },
+        },
+      ],
     });
 
     const result = await acquireIdempotencyKey("failed-key", body);
@@ -126,12 +113,19 @@ describe("acquireIdempotencyKey", () => {
     const body = { data: "test" };
     const hash = hashRequestBody(body);
 
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult({
-      key: "locked-key",
-      request_hash: hash,
-      status: "PROCESSING",
-      locked_at: new Date().toISOString(),
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: "locked-key",
+          request_hash: hash,
+          status: "PROCESSING",
+          locked_at: new Date().toISOString(),
+        },
+      ],
     });
 
     const result = await acquireIdempotencyKey("locked-key", body);
@@ -146,14 +140,23 @@ describe("acquireIdempotencyKey", () => {
     const hash = hashRequestBody(body);
 
     const expiredLock = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult({
-      key: "expired-key",
-      request_hash: hash,
-      status: "PROCESSING",
-      locked_at: expiredLock,
+
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: "expired-key",
+          request_hash: hash,
+          status: "PROCESSING",
+          locked_at: expiredLock,
+        },
+      ],
     });
-    setupUpdateResult(null);
+
+    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
     const result = await acquireIdempotencyKey("expired-key", body);
 
@@ -162,8 +165,11 @@ describe("acquireIdempotencyKey", () => {
   });
 
   it("throws when existing key lookup returns null", async () => {
-    setupInsertResult(null, { code: "23505", message: "duplicate" });
-    setupSelectResult(null);
+    const duplicateError = new Error("duplicate");
+    (duplicateError as any).code = "23505";
+    mockQuery.mockRejectedValueOnce(duplicateError);
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     await expect(
       acquireIdempotencyKey("ghost-key", { data: "test" }),
@@ -177,7 +183,7 @@ describe("markIdempotencyKey", () => {
   });
 
   it("marks key as PROCESSED", async () => {
-    setupUpdateResult(null);
+    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
     await expect(
       markIdempotencyKey("PROCESSED", "key-123", 202, {
@@ -188,7 +194,7 @@ describe("markIdempotencyKey", () => {
   });
 
   it("marks key as FAILED", async () => {
-    setupUpdateResult(null);
+    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
     await expect(
       markIdempotencyKey("FAILED", "key-456", 500, {
@@ -199,7 +205,7 @@ describe("markIdempotencyKey", () => {
   });
 
   it("throws when update fails", async () => {
-    setupUpdateResult({ message: "update failed" });
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 });
 
     await expect(
       markIdempotencyKey("PROCESSED", "key-789", 200, {

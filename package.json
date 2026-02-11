@@ -1,9 +1,11 @@
 {
   "name": "idempo",
   "version": "1.0.0",
-  "description": "1. event fetch (payload)",
+  "description": "Webhook delivery engine with exactly-once guarantees",
   "scripts": {
     "start": "node server.ts",
+    "worker": "node dispatcher/worker.ts",
+    "migrate": "node db/migrate.ts",
     "test": "vitest",
     "test:run": "vitest run"
   },
@@ -20,15 +22,19 @@
   },
   "homepage": "https://github.com/tusharlangh/idempo#readme",
   "dependencies": {
-    "@supabase/supabase-js": "^2.93.2",
+    "@types/cors": "^2.8.19",
+    "@types/pg": "^8.16.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "pg": "^8.18.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
     "vitest": "^4.0.18"
   }
 }

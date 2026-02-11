@@ -4,23 +4,10 @@ import {
   getDeliveryAttempts,
 } from "./deliveryLogger.service.ts";
 
-const mockInsert = vi.fn();
-const mockSelectEq = vi.fn();
-const mockOrder = vi.fn();
+const mockQuery = vi.fn();
 
-vi.mock("../utils/supabase/client.ts", () => ({
-  default: {
-    from: vi.fn((table: string) => {
-      if (table === "delivery_attempts") {
-        return {
-          insert: mockInsert,
-          select: vi.fn().mockReturnValue({
-            eq: mockSelectEq,
-          }),
-        };
-      }
-    }),
-  },
+vi.mock("../db/pool.ts", () => ({
+  query: (...args: any[]) => mockQuery(...args),
 }));
 
 describe("logDeliveryAttempt", () => {
@@ -29,7 +16,7 @@ describe("logDeliveryAttempt", () => {
   });
 
   it("logs a successful delivery attempt", async () => {
-    mockInsert.mockResolvedValue({ error: null });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
     await expect(
       logDeliveryAttempt(
@@ -51,7 +38,7 @@ describe("logDeliveryAttempt", () => {
   });
 
   it("logs a failed delivery attempt with error message", async () => {
-    mockInsert.mockResolvedValue({ error: null });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
     await expect(
       logDeliveryAttempt(
@@ -72,9 +59,7 @@ describe("logDeliveryAttempt", () => {
   });
 
   it("throws when insert fails", async () => {
-    mockInsert.mockResolvedValue({
-      error: { message: "insert failed" },
-    });
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 });
 
     await expect(
       logDeliveryAttempt(
@@ -96,11 +81,11 @@ describe("logDeliveryAttempt", () => {
 
   it("calculates latency correctly", async () => {
     const startedAt = new Date(Date.now() - 150);
-    let insertedData: any;
+    let capturedParams: any;
 
-    mockInsert.mockImplementation((data: any) => {
-      insertedData = data;
-      return Promise.resolve({ error: null });
+    mockQuery.mockImplementation((_sql: string, params: any[]) => {
+      capturedParams = params;
+      return Promise.resolve({ rowCount: 1 });
     });
 
     await logDeliveryAttempt(
@@ -115,15 +100,16 @@ describe("logDeliveryAttempt", () => {
       { statusCode: 200, success: true },
     );
 
-    expect(insertedData.latency_ms).toBeGreaterThanOrEqual(100);
+    const latencyMs = capturedParams[10];
+    expect(latencyMs).toBeGreaterThanOrEqual(100);
   });
 
   it("truncates response body to 1000 characters", async () => {
-    let insertedData: any;
+    let capturedParams: any;
 
-    mockInsert.mockImplementation((data: any) => {
-      insertedData = data;
-      return Promise.resolve({ error: null });
+    mockQuery.mockImplementation((_sql: string, params: any[]) => {
+      capturedParams = params;
+      return Promise.resolve({ rowCount: 1 });
     });
 
     const longResponse = "x".repeat(2000);
@@ -140,15 +126,16 @@ describe("logDeliveryAttempt", () => {
       { statusCode: 200, responseBody: longResponse, success: true },
     );
 
-    expect(insertedData.response_body.length).toBe(1000);
+    const responseBody = capturedParams[6];
+    expect(responseBody.length).toBe(1000);
   });
 
   it("handles null optional fields", async () => {
-    let insertedData: any;
+    let capturedParams: any;
 
-    mockInsert.mockImplementation((data: any) => {
-      insertedData = data;
-      return Promise.resolve({ error: null });
+    mockQuery.mockImplementation((_sql: string, params: any[]) => {
+      capturedParams = params;
+      return Promise.resolve({ rowCount: 1 });
     });
 
     await logDeliveryAttempt(
@@ -163,9 +150,9 @@ describe("logDeliveryAttempt", () => {
       { success: false },
     );
 
-    expect(insertedData.status_code).toBeNull();
-    expect(insertedData.response_body).toBeNull();
-    expect(insertedData.error_message).toBeNull();
+    expect(capturedParams[5]).toBeNull();
+    expect(capturedParams[6]).toBeNull();
+    expect(capturedParams[7]).toBeNull();
   });
 });
 
@@ -175,14 +162,11 @@ describe("getDeliveryAttempts", () => {
   });
 
   it("returns delivery attempts for an event", async () => {
-    mockSelectEq.mockReturnValue({
-      order: vi.fn().mockResolvedValue({
-        data: [
-          { id: "da-1", attempt_number: 1, success: false },
-          { id: "da-2", attempt_number: 2, success: true },
-        ],
-        error: null,
-      }),
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: "da-1", attempt_number: 1, success: false },
+        { id: "da-2", attempt_number: 2, success: true },
+      ],
     });
 
     const attempts = await getDeliveryAttempts("evt-123");
@@ -193,12 +177,7 @@ describe("getDeliveryAttempts", () => {
   });
 
   it("returns empty array on error", async () => {
-    mockSelectEq.mockReturnValue({
-      order: vi.fn().mockResolvedValue({
-        data: null,
-        error: { message: "query failed" },
-      }),
-    });
+    mockQuery.mockRejectedValueOnce(new Error("query failed"));
 
     const attempts = await getDeliveryAttempts("evt-error");
 
@@ -206,12 +185,7 @@ describe("getDeliveryAttempts", () => {
   });
 
   it("returns empty array when no attempts exist", async () => {
-    mockSelectEq.mockReturnValue({
-      order: vi.fn().mockResolvedValue({
-        data: [],
-        error: null,
-      }),
-    });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const attempts = await getDeliveryAttempts("evt-none");
 
