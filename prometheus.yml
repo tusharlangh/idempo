@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "idempo-api"
+    static_configs:
+      - targets: ["api:3000"]
+
+  - job_name: "idempo-worker"
+    static_configs:
+      - targets: ["idempo-worker-1:3001", "idempo-worker-2:3001"]

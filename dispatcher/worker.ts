@@ -11,6 +11,24 @@ import { RateLimiter } from "../utils/rateLimiter.ts";
 import { randomUUID } from "crypto";
 import { logDeliveryAttempt } from "../services/deliveryLogger.service.ts";
 import { workerLogger } from "../utils/logger.ts";
+import {
+  eventsProcessedTotal,
+  eventProcessingDurationSeconds,
+} from "../utils/metrics.ts";
+import express from "express";
+import register from "../utils/metrics.ts";
+
+const app = express();
+const METRICS_PORT = 3001;
+
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
+
+app.listen(METRICS_PORT, "0.0.0.0", () => {
+  workerLogger.info({ port: METRICS_PORT }, "Worker metrics server started");
+});
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +93,7 @@ async function run() {
     }
 
     try {
+      const startProcessingTime = Date.now();
       const event = await claimEvent();
 
       if (!event) {
@@ -153,6 +172,8 @@ async function run() {
       const idempotencyKey = event.idempotency_key;
 
       if (error_details.flag === "FAILURE") {
+        eventsProcessedTotal.inc({ status: "failure" });
+
         await moveToDeadLetter(
           event.id,
           idempotencyKey,
@@ -174,6 +195,8 @@ async function run() {
           "Event failed after retires",
         );
       } else {
+        eventsProcessedTotal.inc({ status: "success" });
+
         await query(
           `UPDATE event SET event_status = 'DELIVERED' WHERE id = $1`,
           [event.id],
@@ -186,6 +209,10 @@ async function run() {
 
         log.info({ eventId: event.id }, "Event delivered successfully");
       }
+
+      const duration = (Date.now() - startProcessingTime) / 1000;
+
+      eventProcessingDurationSeconds.observe(duration);
     } catch (error) {
       log.error({ error: error }, "Worker error");
       await sleep(1000);

@@ -42,7 +42,13 @@ services:
     command: npx tsx server.ts
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health/ready').then(r => r.ok ? process.exit(0) : process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health/ready').then(r => r.ok ? process.exit(0) : process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -57,8 +63,31 @@ services:
         condition: service_completed_successfully
     command: npx tsx dispatcher/worker.ts
     restart: unless-stopped
+    ports:
+      - "3001-3005:3001"
     deploy:
       replicas: 2
 
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3100:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
+  grafana_data:
