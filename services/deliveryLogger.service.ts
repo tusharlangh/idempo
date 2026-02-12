@@ -1,5 +1,6 @@
 import { AppError } from "../middleware/errorHandler.ts";
 import { query } from "../db/pool.ts";
+import { dbLogger } from "../utils/logger.ts";
 
 export interface LogDeliveryParams {
   eventId: string;
@@ -62,7 +63,7 @@ export async function getDeliveryAttempts(eventId: string) {
     );
     return rows;
   } catch (error) {
-    console.error("Failed to get delivery attempts: ", error);
+    dbLogger.error({ err: error }, "Failed to get delivery attempts");
     return [];
   }
 }

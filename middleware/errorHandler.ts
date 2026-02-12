@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import type { AppError as AppErrorConfig } from "../types/appError.ts";
+import { errorMiddlewareLogger } from "../utils/logger.ts";
 
 export class AppError extends Error {
   statusCode: number;
@@ -50,7 +51,7 @@ export function errorHandler(
   let message = err.message || "An unexpected error occurred";
   let details = err.details || null;
 
-  console.error({
+  errorMiddlewareLogger.error({
     timestamp: new Date().toISOString(),
     error: message,
     code: code,

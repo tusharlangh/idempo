@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import pool from "./pool.ts";
+import { dbLogger } from "../utils/logger.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,7 +31,7 @@ async function migrate() {
 
     for (const file of files) {
       if (appliedSet.has(file)) {
-        console.log(`Skipping ${file} (already applied)`);
+        dbLogger.info({ migration: file }, "Already applied");
         continue;
       }
 
@@ -44,15 +45,15 @@ async function migrate() {
           [file],
         );
         await client.query("COMMIT");
-        console.log(`Applied ${file}`);
+        dbLogger.info({ migration: file }, "Applied");
       } catch (e) {
         await client.query("ROLLBACK");
-        console.error(`Failed to apply ${file}:`, e);
+        dbLogger.error({ migration: file, error: e }, "Failed to apply");
         throw e;
       }
     }
 
-    console.log("All migrations applied");
+    dbLogger.info("All migrations applied");
   } finally {
     client.release();
     await pool.end();
@@ -60,6 +61,6 @@ async function migrate() {
 }
 
 migrate().catch((e) => {
-  console.error("Migration failed:", e);
+  dbLogger.error({ error: e }, "Migration failed");
   process.exit(1);
 });

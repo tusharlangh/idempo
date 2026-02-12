@@ -10,17 +10,38 @@ import { moveToDeadLetter } from "../services/dlq.service.ts";
 import { RateLimiter } from "../utils/rateLimiter.ts";
 import { randomUUID } from "crypto";
 import { logDeliveryAttempt } from "../services/deliveryLogger.service.ts";
+import { workerLogger } from "../utils/logger.ts";
+import {
+  eventsProcessedTotal,
+  eventProcessingDurationSeconds,
+} from "../utils/metrics.ts";
+import express from "express";
+import register from "../utils/metrics.ts";
+
+const app = express();
+const METRICS_PORT = 3001;
+
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
+
+app.listen(METRICS_PORT, "0.0.0.0", () => {
+  workerLogger.info({ port: METRICS_PORT }, "Worker metrics server started");
+});
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const WORKERID = `worker-${randomUUID().slice(0, 8)}`;
-console.log(`WORKER - Starting with ID: ${WORKERID}`);
+const log = workerLogger.child({ workerId: WORKERID });
+
+log.info({ WORKERID }, "Worker started");
 
 let isShuttingDown = false;
 process.on("SIGINT", () => {
-  console.log("\nSHUTDOWN received, finishing current work");
+  log.info("SHUTDOWN received, finishing current work");
   isShuttingDown = true;
 });
 
@@ -28,11 +49,11 @@ const retry = new Retry();
 const rateLimiter = new RateLimiter(10, 10);
 
 process.on("SIGTERM", () => {
-  console.log("\nSHUTDOWN received, finishing current work");
+  log.info("SHUTDOWN received, finishing current work");
   isShuttingDown = true;
 
   setTimeout(() => {
-    console.error("SHUTDOWN - Forced exit after timeout");
+    log.error("SHUTDOWN - Forced exit after timeout");
     process.exit(1);
   }, 30000);
 });
@@ -63,15 +84,16 @@ async function runContainer() {
 }
 
 async function run() {
-  console.log("Worker started");
+  log.info("Worker started");
 
   while (true) {
     if (isShuttingDown) {
-      console.log("SHUTDOWN - Exiting worker loop");
+      log.info("SHUTDOWN - Exiting worker loop");
       break;
     }
 
     try {
+      const startProcessingTime = Date.now();
       const event = await claimEvent();
 
       if (!event) {
@@ -79,14 +101,15 @@ async function run() {
         continue;
       }
 
-      console.log(
-        `Processing event ID: ${event.id} to ${event.destination_url}`,
+      log.info(
+        { eventId: event.id, destinationUrl: event.destination_url },
+        "Processing event",
       );
 
       await rateLimiter.acquire();
 
       const { result, error_details } = await retry.retry(async (attempt) => {
-        console.log(`Attempt ${attempt} for event ${event.id}`);
+        log.info({ eventId: event.id, attempt }, "Delivery attempt");
         const startedAt = new Date();
         const requestHeaders = { "Content-Type": "application/json" };
 
@@ -149,6 +172,8 @@ async function run() {
       const idempotencyKey = event.idempotency_key;
 
       if (error_details.flag === "FAILURE") {
+        eventsProcessedTotal.inc({ status: "failure" });
+
         await moveToDeadLetter(
           event.id,
           idempotencyKey,
@@ -165,9 +190,13 @@ async function run() {
           success: false,
           action: "FAILED",
         });
-
-        console.error(`Event ${event.id} failed after retries:`, error_details);
+        log.error(
+          { eventId: event.id, errorDetails: error_details },
+          "Event failed after retires",
+        );
       } else {
+        eventsProcessedTotal.inc({ status: "success" });
+
         await query(
           `UPDATE event SET event_status = 'DELIVERED' WHERE id = $1`,
           [event.id],
@@ -178,15 +207,18 @@ async function run() {
           action: "PROCESSED",
         });
 
-        console.log(`Event ${event.id} delivered successfully`);
+        log.info({ eventId: event.id }, "Event delivered successfully");
       }
+
+      const duration = (Date.now() - startProcessingTime) / 1000;
+
+      eventProcessingDurationSeconds.observe(duration);
     } catch (error) {
-      console.error("Worker error:", error);
+      log.error({ error: error }, "Worker error");
       await sleep(1000);
     }
   }
-
-  console.log("SHUTDOWN - Worker stopped cleanly");
+  log.info("Shutdown worker stopped cleanly");
   await pool.end();
   process.exit(0);
 }

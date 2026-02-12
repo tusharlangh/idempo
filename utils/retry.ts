@@ -4,6 +4,7 @@ import type {
   HistoryProps,
   RetryAttempProps,
 } from "../types/retry.d.ts";
+import { retryLogger } from "./logger.ts";
 
 export class Retry {
   history: HistoryProps[];
@@ -49,8 +50,9 @@ export class Retry {
           flag = "FAILURE";
           break;
         }
-        console.log(
-          `retrying for the ${retryIndex} with error: ${error.message}`,
+        retryLogger.info(
+          { retryIndex: retryIndex, message: error.message },
+          "Retrying...",
         );
         await this.sleep(100 * retryIndex);
         curRetry++;
